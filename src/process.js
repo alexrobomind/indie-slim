@@ -1,15 +1,66 @@
+function assert(should_be_true, msg) {
+	if(!should_be_true) throw(msg);
+}
+
+/** An inventory is used to model the specific items that are in stores.
+ *
+ *  An inventory can hold two kinds of keys:
+ *
+ *   - General Items
+ *   - Assets, which implement the same interface as items, but are linked to a specific item stack in the EVE database
+ */
 class Inventory {
 	constructor() {
-		// Map ItemType -> Integer of stacked items
 		this.item_stacks = new Map();
-		this.items = [];
+	}
+	
+	find(key) {
+		if(key instanceof Item)
+			filter = x => {x == key || (x instanceof AssetItem && x.item == key)};
+		else if(key instanceof ItemType)
+			filter = x => {x.type == key};
+		else
+			filter = key;
+		
+		keys = this.item_stacks.filter(filter);
+		return keys.map(x => {[x, this.item_stacks.get(x)]});
+	}
+	
+	put(key, amount) {
+		assert(key instanceof Item, "Inventory key must be Items");
+		
+		if this.item_stacks.has(key)
+			this.item_stacks.set(key, this.item_stacks.get(key) + amount);
+		else
+			this.item_stacks.set(key, amount);
+	}
+	
+	remove(key, amount) {
+		remaining = amount;
+		
+		entries = this.find(key);
+		total   = entries.reduce((x, y) => { x + y[1] }, 0);
+		
+		assert(total >= amount, "Insufficient amount of to-be-removed items in inventory");
+		
+		for entry of this.get_all(filter) {
+			entry_key = entry[0];
+			entry_amount = entry[1];
+			
+			to_remove = min(remaining, entry_amount);
+			
+			if to_remove == entry_amount
+				this.item_stacks.delete(entry_key);
+			else
+				this.item_stacks.set(entry_key, entry_amount - to_remove);
+		}
 	}
 	
 	clone() {
 		result = new Inventory();
 		
-		this.item_stacks.for_each((key, val, map) => { result.item_stacks.put(key, val); });
-		this.items.for_each(item => { result.items.push(item.clone()); });
+		for entry of this.item_stacks.entries
+			result.item_stacks.set(entry[0], entry[1]);
 		
 		return result;
 	}
@@ -24,10 +75,6 @@ class Inventory {
 		);
 		old.forEach(key => { this.item_stacks.delete(key); });
 	}
-}
-
-function assert(should_be_true, msg) {
-	if(!should_be_true) throw(msg);
 }
 
 class Process {
@@ -46,7 +93,6 @@ class Process {
 	
 	consumes_items(type, amount) { this.behaviors.push(ConsumesItems(type, amount)); }
 	produces_items(type, amount) { this.behaviors.push(ProducesItems(type, amount)); }
-	produces_item(template) { this.behaviors.push(ProducesItem(template)); }
 	damages_items(type, amount) { this.behaviors.push(DamagesItems(type, amount)); }
 }
 
@@ -59,10 +105,7 @@ class ConsumesItems {
 	}
 	
 	start(inventory) {
-		count = inventory.item_stacks.get(this.type);
-		assert(count !== undefined, "No items in inventory");
-		assert(count >= amount, "Insufficient amount in inventory");
-		inventory.item_stacks.put(this.type, count - this.amount);
+		inventory.remove(this.type, this.amount);
 	}
 	
 	end(inventory, success) {}
@@ -71,8 +114,8 @@ class ConsumesItems {
 }
 
 class ProducesItems {
-	constructor(type, amount) {
-		this.type = type;
+	constructor(item, amount) {
+		this.item = item;
 		this.amount = amount;
 	}
 	
@@ -82,32 +125,10 @@ class ProducesItems {
 		if !success
 			return;
 		
-		count = inventory.item_stacks.get(this.type);
-		
-		if count === undefined
-			count = 0;
-		
-		inventory.item_stacks.put(this.type, count + this.amount);
+		inventory.put(this.item, this.amount);
 	}
 	
 	balance(chance) { return new Map([this.type, this.amount * chance]); }
-}
-
-class ProducesItem {
-	constructor(item) {
-		this.item = item;
-	}
-	
-	start(inventory) {}
-	
-	end(inventory, success) {
-		if !success
-			return;
-		
-		inventory.items.push(item.clone());
-	}
-	
-	balance(chance) { return new Map([this.item.type, chance]); }
 }
 
 class DamagesItems {
@@ -117,37 +138,47 @@ class DamagesItems {
 	}
 	
 	start(inventory) {
-		amount_remaining = this.amount;
+		entries = inventory.items.find(x => {x.type == this.type});
+		total_health = entries.sum((partial, el) => { partial + el[0].health * el[1] }, 0);
+
+		assert(total_health >= this.amount, "Insufficient inventory");
 		
-		while(amount_remaining > 0) {
+		damage_remaining = this.amount;
+		
+		while(damage_remaining > 0) {
 			// See if there are still partially damaged items remaining
-			items = inventory.items.filter(x => {x.type == this.type}).sort((a, b) => {a.damage > b.damage});
+			entries = inventory.items.find(x => {x.type == this.type})	// Find all items / item stack entries
+				.sort((a, b) => {a[0].health < b[0].health});			// Sort by damage (descending)
 			
-			if items.length > 0 {
-				// Consume the item with the highest amount of damage first
-				item = items[0];
+			assert(entries.length > 0, "Internal error");
+			
+			item  = entries[0];
+			stock = entries[1];
+			
+			// Check if we need to remove multiples of items
+			if damage_remaining >= item.health {
+				// Do not modify the stack properties, but remove multiples of items
+				to_remove = floor(damage_remaining / item.health);
+				to_remove = min(to_remove, stock);
 				
-				possibleDamage = min(1 - item.damage, amount_remaining);
-				
-				amount_remaining -= possibleDamage;
-				item.damage += possibleDamage;
-				
-				if item.damage >= 1
-					inventory.items = inventory.items.filter(x => { x !== item });
+				inventory.remove(item, stock);
+				damage_remaining -= to_remove * item.health;
 			} else {
-				take_out = ceil(amount_remaining);
+				// The damage is less than all items health
+				// Remove one of the items from the stack and insert it with less remaining health
+				inventory.remove(item, 1);
 				
-				stack_amount = inventory.item_stacks.get(this.type);
+				new_item = item.clone();
+				new_item.health = item.health - damage_remaining;
 				
-				assert(stack_amount !== undefined, "No inventory");
-				assert(stack_amount >= take_out, "Insufficient inventory");
-				
-				inventory.item_stacks.put(this.type, stack_amount - take_out);
-				
-				for(i = 0; i < stack_amount; ++i)
-					inventory.items.push(this.type.create_item());
+				// Put the damaged item on the stack
+				inventory.put(new_item, 1);
 			}
 		}
 	}
+	
+	end(inventory, success) {}
+	
+	balance(chance) { return new Map([this.type, -this.amount]); }
 }
 
