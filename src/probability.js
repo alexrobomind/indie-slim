@@ -4,37 +4,37 @@ function assert(should_be_true, msg) {
 
 class Distribution {
 	constructor() {
-		this.probabilities = Map();
+		this.dist = [];
 	}
 	
 	map(func) {
 		result = new Distribution();
 		
-		for entry of this.probabilities.entries() {
-			state = entry[0];
-			probability = entry[1];
+		for entry of this.dist {
+			state = entry.state;
+			probability = entry.p;
 			
-			sub_distribution = func(entry[0]);
+			sub_distribution = func(state);
 			
-			for sub_entry in sub_distribution.probabilities.entries() {
-				sub_state = sub_entry[0];
-				sub_prob  = sub_entry[1];
+			for sub_entry in sub_distribution.dist {
+				sub_state = sub_entry.state;
+				sub_prob  = sub_entry.p;
 				
-				if result.probabilities.has(sub_state)
-					base_probability = result.probabilities.get(sub_state);
+				var index = result.dist.findIndex(x => x.state.equals(sub_state));
+				
+				if index != -1
+					result.dist[index].p += probability * sub_prob;
 				else
-					base_probability = 0;
-				
-				result.probabilities.set(sub_state, base_probability + probability * sub_prob);
+					result.dist.push({state: sub_state, p: probability * sub_prob});
 			}
 		}
 		
 		return result;
 	}
 	
-	static wrap(object) {
+	static singleton(object) {
 		result = new Distribution();
-		result.probabilities.set(object, 1);
+		result.dist = {state: object, p: 1};
 		return result;
-	}
+	}	
 }

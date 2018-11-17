@@ -11,69 +11,85 @@ function assert(should_be_true, msg) {
  */
 class Inventory {
 	constructor() {
-		this.item_stacks = new Map();
+		this.contents = [];
+	}
+	
+	key_to_filter(key) {
+		var filter;
+		
+		if(key instanceof Item)
+			filter = x => {x.key.equals(key)};
+		else if(key instanceof ItemType)
+			filter = x => {x.type.equals(key)};
+		else
+			filter = x => {key(x.key)};
+		
+		return filter;
 	}
 	
 	find(key) {
-		if(key instanceof Item)
-			filter = x => {x == key || (x instanceof AssetItem && x.item == key)};
-		else if(key instanceof ItemType)
-			filter = x => {x.type == key};
-		else
-			filter = key;
-		
-		keys = this.item_stacks.filter(filter);
-		return keys.map(x => {[x, this.item_stacks.get(x)]});
+		return this.contents.filter(this.key_to_filter(key));
 	}
 	
 	put(key, amount) {
-		assert(key instanceof Item, "Inventory key must be Items");
+		var index = this.contents.findIndex(this.key_to_filter(key));
 		
-		if this.item_stacks.has(key)
-			this.item_stacks.set(key, this.item_stacks.get(key) + amount);
-		else
-			this.item_stacks.set(key, amount);
+		if index != -1
+			this.contents[index].amount += 1;
+		else {
+			assert(key instanceof Item, "To insert element without matching stack, key must be of type 'Item'");
+			this.contents.push({key: key, value: 1});
+		}
+		
+		this.sort();
 	}
 	
 	remove(key, amount) {
-		remaining = amount;
+		var remaining = amount;
 		
-		entries = this.find(key);
-		total   = entries.reduce((x, y) => { x + y[1] }, 0);
+		var filter = key_to_filter(key);
+		
+		var entries = this.find(filter);
+		var total   = entries.reduce((x, y) => { x + y[1] }, 0);
 		
 		assert(total >= amount, "Insufficient amount of to-be-removed items in inventory");
 		
-		for entry of this.get_all(filter) {
-			entry_key = entry[0];
-			entry_amount = entry[1];
+		while remaining > 0 {
+			var index = this.contents.findIndex(filter);
+			assert(index != -1, "Internal error: No elements left even though count indicated otherwise");
+			var entry = this.contents[index];
 			
-			to_remove = min(remaining, entry_amount);
+			to_remove = min(remaining, entry.value);
+			remaining -= to_remove;
 			
-			if to_remove == entry_amount
-				this.item_stacks.delete(entry_key);
+			if to_remove == entry.value
+				// Remove entry
+				this.contents = this.contents.slice(0, index).concat(this.contents.slice(index + 1));
 			else
-				this.item_stacks.set(entry_key, entry_amount - to_remove);
+				// Adjust entry
+				this.contents[index].value -= to_remove;
 		}
+		
+		this.sort();
 	}
 	
 	clone() {
 		result = new Inventory();
 		
-		for entry of this.item_stacks.entries
-			result.item_stacks.set(entry[0], entry[1]);
+		result.contents = contents.slice();
 		
 		return result;
 	}
 	
-	clean() {
-		old = [];
-		this.item_stacks.forEach(
-			(key, val, map) => {
-				if(val == 0)
-					old.push(key);
-			}
-		);
-		old.forEach(key => { this.item_stacks.delete(key); });
+	sort() {
+		function entry_comparator(x, y) {
+			if(!x.key.equals(y.key))
+				return x.key.comparator;
+			
+			return x.value < y.value;
+		}
+		
+		this.contents.sort(entry_comparator);
 	}
 }
 

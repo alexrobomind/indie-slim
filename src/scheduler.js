@@ -36,6 +36,8 @@ function* iterate_dynamic(source) {
 	}
 }
 
+
+
 function schedule(generators, processes, inventory) {
 	// Prepare initial state of scheduler (start inventory, no running processes)
 	var state = Distribution.wrap({
@@ -95,16 +97,16 @@ function schedule(generators, processes, inventory) {
 				inventory = state.inventory.clone();
 				scheduled = [];
 				
-				// Try to schedule each process (the start method modified the states as neccessary)
+				// Try to schedule each process (the start method modifies the inventories as neccessary)
 				for process of processes {
+					var backup_inventory = inventory.clone();
 					try {
 						process.start(inventory);
 						scheduled.push(process);
 					} catch(e) {
+						inventory = backup_inventory();
 					}
 				}
-				
-				// 
 			}
 		);
 	}
